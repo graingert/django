@@ -4,7 +4,7 @@ import os
 import sys
 
 from django.apps import apps
-from django.db.models.fields import NOT_PROVIDED
+from django.db.models import NOT_PROVIDED
 from django.utils import timezone
 
 from .loader import MigrationLoader
@@ -29,7 +29,7 @@ class MigrationQuestioner:
             return True
         # Otherwise, we look to see if it has a migrations module
         # without any Python files in it, apart from __init__.py.
-        # Apps from the new app template will have these; the python
+        # Apps from the new app template will have these; the Python
         # file check will ensure we skip South ones.
         try:
             app_config = apps.get_app_config(app_label)
@@ -44,7 +44,6 @@ class MigrationQuestioner:
         except ImportError:
             return self.defaults.get("ask_initial", False)
         else:
-            # getattr() needed on PY36 and older (replace with attribute access).
             if getattr(migrations_module, "__file__", None):
                 filenames = os.listdir(os.path.dirname(migrations_module.__file__))
             elif hasattr(migrations_module, "__path__"):

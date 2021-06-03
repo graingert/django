@@ -25,7 +25,7 @@ class MockRequest:
 
 
 class MockSuperUser:
-    def has_perm(self, perm):
+    def has_perm(self, perm, obj=None):
         return True
 
 
@@ -35,12 +35,15 @@ request.user = MockSuperUser()
 
 class ModelAdminTests(TestCase):
 
-    def setUp(self):
-        self.band = Band.objects.create(
+    @classmethod
+    def setUpTestData(cls):
+        cls.band = Band.objects.create(
             name='The Doors',
             bio='',
             sign_date=date(1965, 1, 1),
         )
+
+    def setUp(self):
         self.site = AdminSite()
 
     def test_modeladmin_str(self):
@@ -437,6 +440,28 @@ class ModelAdminTests(TestCase):
             ['main_band', 'day', 'transport', 'id', 'DELETE']
         )
 
+    def test_raw_id_fields_widget_override(self):
+        """
+        The autocomplete_fields, raw_id_fields, and radio_fields widgets may
+        overridden by specifying a widget in get_formset().
+        """
+        class ConcertInline(TabularInline):
+            model = Concert
+            fk_name = 'main_band'
+            raw_id_fields = ('opening_band',)
+
+            def get_formset(self, request, obj=None, **kwargs):
+                kwargs['widgets'] = {'opening_band': Select}
+                return super().get_formset(request, obj, **kwargs)
+
+        class BandAdmin(ModelAdmin):
+            inlines = [ConcertInline]
+
+        ma = BandAdmin(Band, self.site)
+        band_widget = list(ma.get_formsets_with_inlines(request))[0][0]().forms[0].fields['opening_band'].widget
+        # Without the override this would be ForeignKeyRawIdWidget.
+        self.assertIsInstance(band_widget, Select)
+
     def test_queryset_override(self):
         # If the queryset of a ModelChoiceField in a custom form is overridden,
         # RelatedFieldWidgetWrapper doesn't mess that up.
@@ -705,19 +730,19 @@ class ModelAdminPermissionTests(SimpleTestCase):
             return app_label == 'modeladmin'
 
     class MockViewUser(MockUser):
-        def has_perm(self, perm):
+        def has_perm(self, perm, obj=None):
             return perm == 'modeladmin.view_band'
 
     class MockAddUser(MockUser):
-        def has_perm(self, perm):
+        def has_perm(self, perm, obj=None):
             return perm == 'modeladmin.add_band'
 
     class MockChangeUser(MockUser):
-        def has_perm(self, perm):
+        def has_perm(self, perm, obj=None):
             return perm == 'modeladmin.change_band'
 
     class MockDeleteUser(MockUser):
-        def has_perm(self, perm):
+        def has_perm(self, perm, obj=None):
             return perm == 'modeladmin.delete_band'
 
     def test_has_view_permission(self):

@@ -4,8 +4,9 @@ from xml.dom.minidom import parseString
 
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core import mail
+from django.core.exceptions import ValidationError
 from django.forms import fields
-from django.forms.forms import Form, ValidationError
+from django.forms.forms import Form
 from django.forms.formsets import BaseFormSet, formset_factory
 from django.http import (
     HttpResponse, HttpResponseBadRequest, HttpResponseNotAllowed,
@@ -23,6 +24,10 @@ def get_view(request):
     c = Context({'var': request.GET.get('var', 42)})
 
     return HttpResponse(t.render(c))
+
+
+async def async_get_view(request):
+    return HttpResponse(b'GET content.')
 
 
 def trace_view(request):
@@ -83,21 +88,21 @@ def post_view(request):
 def json_view(request):
     """
     A view that expects a request with the header 'application/json' and JSON
-    data with a key named 'value'.
+    data, which is deserialized and included in the context.
     """
     if request.META.get('CONTENT_TYPE') != 'application/json':
         return HttpResponse()
 
     t = Template('Viewing {} page. With data {{ data }}.'.format(request.method))
     data = json.loads(request.body.decode('utf-8'))
-    c = Context({'data': data['value']})
+    c = Context({'data': data})
     return HttpResponse(t.render(c))
 
 
 def view_with_header(request):
     "A view that has a custom header"
     response = HttpResponse()
-    response['X-DJANGO-TEST'] = 'Slartibartfast'
+    response.headers['X-DJANGO-TEST'] = 'Slartibartfast'
     return response
 
 
@@ -124,6 +129,14 @@ def redirect_view(request):
     else:
         query = ''
     return HttpResponseRedirect('/get_view/' + query)
+
+
+def method_saving_307_redirect_query_string_view(request):
+    return HttpResponseRedirect('/post_view/?hello=world', status=307)
+
+
+def method_saving_308_redirect_query_string_view(request):
+    return HttpResponseRedirect('/post_view/?hello=world', status=308)
 
 
 def _post_view_redirect(request, status_code):
@@ -224,8 +237,7 @@ class BaseTestFormSet(BaseFormSet):
             return
 
         emails = []
-        for i in range(0, self.total_form_count()):
-            form = self.forms[i]
+        for form in self.forms:
             email = form.cleaned_data['email']
             if email in emails:
                 raise ValidationError(

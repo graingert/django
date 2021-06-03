@@ -25,7 +25,7 @@ class VariableResolveLoggingTests(SimpleTestCase):
                 raise TestObject.SilentDoesNotExist("Attribute does not exist.")
 
             def __iter__(self):
-                return iter(attr for attr in dir(TestObject) if attr[:2] != "__")
+                return (attr for attr in dir(TestObject) if attr[:2] != "__")
 
             def __getitem__(self, item):
                 return self.__dict__[item]
@@ -62,6 +62,5 @@ class VariableResolveLoggingTests(SimpleTestCase):
         )
 
     def test_no_log_when_variable_exists(self):
-        with self.assertRaisesMessage(AssertionError, 'no logs'):
-            with self.assertLogs('django.template', self.loglevel):
-                Variable('article.section').resolve({'article': {'section': 'News'}})
+        with self.assertNoLogs('django.template', self.loglevel):
+            Variable('article.section').resolve({'article': {'section': 'News'}})

@@ -1,5 +1,23 @@
-from django.template.base import Variable, VariableDoesNotExist
+from django.template import Context, Template, Variable, VariableDoesNotExist
 from django.test import SimpleTestCase
+from django.utils.translation import gettext_lazy
+
+
+class TemplateTests(SimpleTestCase):
+    def test_lazy_template_string(self):
+        template_string = gettext_lazy('lazy string')
+        self.assertEqual(Template(template_string).render(Context()), template_string)
+
+    def test_repr(self):
+        template = Template(
+            '<html><body>\n'
+            '{% if test %}<h1>{{ varvalue }}</h1>{% endif %}'
+            '</body></html>'
+        )
+        self.assertEqual(
+            repr(template),
+            '<Template template_string="<html><body>{% if t...">',
+        )
 
 
 class VariableDoesNotExistTests(SimpleTestCase):

@@ -3,6 +3,7 @@ import json
 import os
 import re
 from io import StringIO
+from pathlib import Path
 
 from django.core import management, serializers
 from django.core.exceptions import ImproperlyConfigured
@@ -182,11 +183,11 @@ class TestFixtures(TestCase):
         Test for ticket #4371 -- Loading data of an unknown format should fail
         Validate that error conditions are caught correctly
         """
-        msg = "Problem installing fixture 'bad_fixture1': unkn is not a known serialization format."
+        msg = "Problem installing fixture 'bad_fix.ture1': unkn is not a known serialization format."
         with self.assertRaisesMessage(management.CommandError, msg):
             management.call_command(
                 'loaddata',
-                'bad_fixture1.unkn',
+                'bad_fix.ture1.unkn',
                 verbosity=0,
             )
 
@@ -198,7 +199,7 @@ class TestFixtures(TestCase):
         with self.assertRaisesMessage(ImportError, "No module named 'unexistent'"):
             management.call_command(
                 'loaddata',
-                'bad_fixture1.unkn',
+                'bad_fix.ture1.unkn',
                 verbosity=0,
             )
 
@@ -517,6 +518,11 @@ class TestFixtures(TestCase):
             verbosity=0,
         )
 
+    @override_settings(FIXTURE_DIRS=[Path(_cur_dir) / 'fixtures_1'])
+    def test_fixtures_dir_pathlib(self):
+        management.call_command('loaddata', 'inner/absolute.json', verbosity=0)
+        self.assertQuerysetEqual(Absolute.objects.all(), [1], transform=lambda o: o.pk)
+
 
 class NaturalKeyFixtureTests(TestCase):
 
@@ -741,7 +747,8 @@ class NaturalKeyFixtureTests(TestCase):
                 "<Book: Cryptonomicon by Neal Stephenson (available at Amazon, Borders)>",
                 "<Book: Ender's Game by Orson Scott Card (available at Collins Bookstore)>",
                 "<Book: Permutation City by Greg Egan (available at Angus and Robertson)>",
-            ]
+            ],
+            transform=repr,
         )
 
 
@@ -839,10 +846,7 @@ class M2MNaturalKeyFixtureTests(TestCase):
             obj.save()
 
         new_a = M2MSimpleA.objects.get_by_natural_key("a")
-        self.assertQuerysetEqual(new_a.b_set.all(), [
-            "<M2MSimpleB: b1>",
-            "<M2MSimpleB: b2>"
-        ], ordered=False)
+        self.assertCountEqual(new_a.b_set.all(), [b1, b2])
 
 
 class TestTicket11101(TransactionTestCase):

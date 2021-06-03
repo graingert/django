@@ -19,19 +19,13 @@ class InspectDBTests(PostgreSQLTestCase):
         for field_output in field_outputs:
             self.assertIn(field_output, output)
 
-    def test_json_field(self):
-        self.assertFieldsInModel(
-            'postgres_tests_jsonmodel',
-            ['field = django.contrib.postgres.fields.JSONField(blank=True, null=True)'],
-        )
-
     def test_range_fields(self):
         self.assertFieldsInModel(
             'postgres_tests_rangesmodel',
             [
                 'ints = django.contrib.postgres.fields.IntegerRangeField(blank=True, null=True)',
                 'bigints = django.contrib.postgres.fields.BigIntegerRangeField(blank=True, null=True)',
-                'floats = django.contrib.postgres.fields.FloatRangeField(blank=True, null=True)',
+                'decimals = django.contrib.postgres.fields.DecimalRangeField(blank=True, null=True)',
                 'timestamps = django.contrib.postgres.fields.DateTimeRangeField(blank=True, null=True)',
                 'dates = django.contrib.postgres.fields.DateRangeField(blank=True, null=True)',
             ],

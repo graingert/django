@@ -1,6 +1,7 @@
 import os
 import shutil
 import sys
+from pathlib import Path
 
 from django.db.backends.base.creation import BaseDatabaseCreation
 
@@ -9,7 +10,9 @@ class DatabaseCreation(BaseDatabaseCreation):
 
     @staticmethod
     def is_in_memory_db(database_name):
-        return database_name == ':memory:' or 'mode=memory' in database_name
+        return not isinstance(database_name, Path) and (
+            database_name == ':memory:' or 'mode=memory' in database_name
+        )
 
     def _get_test_db_name(self):
         test_database_name = self.connection.settings_dict['TEST']['NAME'] or ':memory:'
@@ -52,7 +55,7 @@ class DatabaseCreation(BaseDatabaseCreation):
             return orig_settings_dict
         else:
             root, ext = os.path.splitext(orig_settings_dict['NAME'])
-            return {**orig_settings_dict, 'NAME': '{}_{}.{}'.format(root, suffix, ext)}
+            return {**orig_settings_dict, 'NAME': '{}_{}{}'.format(root, suffix, ext)}
 
     def _clone_test_db(self, suffix, verbosity, keepdb=False):
         source_database_name = self.connection.settings_dict['NAME']
@@ -89,10 +92,12 @@ class DatabaseCreation(BaseDatabaseCreation):
 
         This takes into account the special cases of ":memory:" and "" for
         SQLite since the databases will be distinct despite having the same
-        TEST NAME. See http://www.sqlite.org/inmemorydb.html
+        TEST NAME. See https://www.sqlite.org/inmemorydb.html
         """
         test_database_name = self._get_test_db_name()
         sig = [self.connection.settings_dict['NAME']]
         if self.is_in_memory_db(test_database_name):
             sig.append(self.connection.alias)
+        else:
+            sig.append(test_database_name)
         return tuple(sig)

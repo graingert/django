@@ -25,13 +25,32 @@ from unittest import mock
 
 from django.contrib.auth.models import User
 from django.core import mail
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseNotAllowed
 from django.test import (
-    Client, RequestFactory, SimpleTestCase, TestCase, override_settings,
+    AsyncRequestFactory, Client, RequestFactory, SimpleTestCase, TestCase,
+    modify_settings, override_settings,
 )
 from django.urls import reverse_lazy
+from django.utils.decorators import async_only_middleware
 
 from .views import TwoArgException, get_view, post_view, trace_view
+
+
+def middleware_urlconf(get_response):
+    def middleware(request):
+        request.urlconf = 'tests.test_client.urls_middleware_urlconf'
+        return get_response(request)
+
+    return middleware
+
+
+@async_only_middleware
+def async_middleware_urlconf(get_response):
+    async def middleware(request):
+        request.urlconf = 'tests.test_client.urls_middleware_urlconf'
+        return await get_response(request)
+
+    return middleware
 
 
 @override_settings(ROOT_URLCONF='test_client.urls')
@@ -58,6 +77,14 @@ class ClientTest(TestCase):
         # WSGI requires latin-1 encoded strings.
         response = self.client.get('/get_view/?var=1\ufffd')
         self.assertEqual(response.context['var'], '1\ufffd')
+
+    def test_get_data_none(self):
+        msg = (
+            "Cannot encode None for key 'value' in a query string. Did you "
+            "mean to pass an empty string or omit the value?"
+        )
+        with self.assertRaisesMessage(TypeError, msg):
+            self.client.get('/get_view/', {'value': None})
 
     def test_get_post_view(self):
         "GET a view that normally expects POSTs"
@@ -87,22 +114,35 @@ class ClientTest(TestCase):
         response = self.client.post('/post_view/', post_data)
 
         # Check some response details
-        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Data received')
         self.assertEqual(response.context['data'], '37')
         self.assertEqual(response.templates[0].name, 'POST Template')
-        self.assertContains(response, 'Data received')
+
+    def test_post_data_none(self):
+        msg = (
+            "Cannot encode None for key 'value' as POST data. Did you mean "
+            "to pass an empty string or omit the value?"
+        )
+        with self.assertRaisesMessage(TypeError, msg):
+            self.client.post('/post_view/', {'value': None})
 
     def test_json_serialization(self):
         """The test client serializes JSON data."""
         methods = ('post', 'put', 'patch', 'delete')
+        tests = (
+            ({'value': 37}, {'value': 37}),
+            ([37, True], [37, True]),
+            ((37, False), [37, False]),
+        )
         for method in methods:
             with self.subTest(method=method):
-                client_method = getattr(self.client, method)
-                method_name = method.upper()
-                response = client_method('/json_view/', {'value': 37}, content_type='application/json')
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.context['data'], 37)
-                self.assertContains(response, 'Viewing %s page.' % method_name)
+                for data, expected in tests:
+                    with self.subTest(data):
+                        client_method = getattr(self.client, method)
+                        method_name = method.upper()
+                        response = client_method('/json_view/', data, content_type='application/json')
+                        self.assertContains(response, 'Viewing %s page.' % method_name)
+                        self.assertEqual(response.context['data'], expected)
 
     def test_json_encoder_argument(self):
         """The test Client accepts a json_encoder."""
@@ -135,7 +175,7 @@ class ClientTest(TestCase):
         "Check the value of HTTP headers returned in a response"
         response = self.client.get("/header_view/")
 
-        self.assertEqual(response['X-DJANGO-TEST'], 'Slartibartfast')
+        self.assertEqual(response.headers['X-DJANGO-TEST'], 'Slartibartfast')
 
     def test_response_attached_request(self):
         """
@@ -172,6 +212,11 @@ class ClientTest(TestCase):
         """
         response = self.client.get('/get_view/')
         self.assertEqual(response.resolver_match.url_name, 'get_view')
+
+    @modify_settings(MIDDLEWARE={'prepend': 'test_client.tests.middleware_urlconf'})
+    def test_response_resolver_match_middleware_urlconf(self):
+        response = self.client.get('/middleware_urlconf_view/')
+        self.assertEqual(response.resolver_match.url_name, 'middleware_urlconf_view')
 
     def test_raw_post(self):
         "POST raw data (with a content type) to a view"
@@ -260,6 +305,34 @@ class ClientTest(TestCase):
                 self.assertEqual(response.request['PATH_INFO'], '/post_view/')
                 self.assertEqual(response.request['REQUEST_METHOD'], method.upper())
 
+    def test_follow_307_and_308_preserves_query_string(self):
+        methods = ('post', 'options', 'put', 'patch', 'delete', 'trace')
+        codes = (307, 308)
+        for method, code in itertools.product(methods, codes):
+            with self.subTest(method=method, code=code):
+                req_method = getattr(self.client, method)
+                response = req_method(
+                    '/redirect_view_%s_query_string/' % code,
+                    data={'value': 'test'},
+                    follow=True,
+                )
+                self.assertRedirects(response, '/post_view/?hello=world', status_code=code)
+                self.assertEqual(response.request['QUERY_STRING'], 'hello=world')
+
+    def test_follow_307_and_308_get_head_query_string(self):
+        methods = ('get', 'head')
+        codes = (307, 308)
+        for method, code in itertools.product(methods, codes):
+            with self.subTest(method=method, code=code):
+                req_method = getattr(self.client, method)
+                response = req_method(
+                    '/redirect_view_%s_query_string/' % code,
+                    data={'value': 'test'},
+                    follow=True,
+                )
+                self.assertRedirects(response, '/post_view/?hello=world', status_code=code)
+                self.assertEqual(response.request['QUERY_STRING'], 'value=test')
+
     def test_follow_307_and_308_preserves_post_data(self):
         for code in (307, 308):
             with self.subTest(code=code):
@@ -314,10 +387,9 @@ class ClientTest(TestCase):
             'multi': ('b', 'c', 'e')
         }
         response = self.client.get('/form_view/', data=hints)
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "Form GET Template")
         # The multi-value data has been rolled out ok
         self.assertContains(response, 'Select a valid choice.', 0)
+        self.assertTemplateUsed(response, "Form GET Template")
 
     def test_incomplete_data_form(self):
         "POST incomplete data to a form"
@@ -327,7 +399,6 @@ class ClientTest(TestCase):
         }
         response = self.client.post('/form_view/', post_data)
         self.assertContains(response, 'This field is required.', 3)
-        self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "Invalid POST Template")
 
         self.assertFormError(response, 'form', 'email', 'This field is required.')
@@ -736,6 +807,20 @@ class ClientTest(TestCase):
         with self.assertRaises(KeyError):
             self.client.get("/broken_view/")
 
+    def test_exc_info(self):
+        client = Client(raise_request_exception=False)
+        response = client.get("/broken_view/")
+        self.assertEqual(response.status_code, 500)
+        exc_type, exc_value, exc_traceback = response.exc_info
+        self.assertIs(exc_type, KeyError)
+        self.assertIsInstance(exc_value, KeyError)
+        self.assertEqual(str(exc_value), "'Oops! Looks like you wrote some bad code.'")
+        self.assertIsNotNone(exc_traceback)
+
+    def test_exc_info_none(self):
+        response = self.client.get("/get_view/")
+        self.assertIsNone(response.exc_info)
+
     def test_mail_sending(self):
         "Mail is redirected to a dummy outbox during test setup"
         response = self.client.get('/mail_sending_view/')
@@ -792,8 +877,9 @@ class ClientTest(TestCase):
 
     def test_response_raises_multi_arg_exception(self):
         """A request may raise an exception with more than one required arg."""
-        with self.assertRaises(TwoArgException):
+        with self.assertRaises(TwoArgException) as cm:
             self.client.get('/two_arg_exception/')
+        self.assertEqual(cm.exception.args, ('one', 'two'))
 
     def test_uploading_temp_file(self):
         with tempfile.TemporaryFile() as test_file:
@@ -854,9 +940,7 @@ class RequestFactoryTest(SimpleTestCase):
         ('options', _generic_view),
         ('trace', trace_view),
     )
-
-    def setUp(self):
-        self.request_factory = RequestFactory()
+    request_factory = RequestFactory()
 
     def test_request_factory(self):
         """The request factory implements all the HTTP/1.1 methods."""
@@ -882,3 +966,90 @@ class RequestFactoryTest(SimpleTestCase):
         protocol = request.META["SERVER_PROTOCOL"]
         echoed_request_line = "TRACE {} {}".format(url_path, protocol)
         self.assertContains(response, echoed_request_line)
+
+
+@override_settings(ROOT_URLCONF='test_client.urls')
+class AsyncClientTest(TestCase):
+    async def test_response_resolver_match(self):
+        response = await self.async_client.get('/async_get_view/')
+        self.assertTrue(hasattr(response, 'resolver_match'))
+        self.assertEqual(response.resolver_match.url_name, 'async_get_view')
+
+    @modify_settings(
+        MIDDLEWARE={'prepend': 'test_client.tests.async_middleware_urlconf'},
+    )
+    async def test_response_resolver_match_middleware_urlconf(self):
+        response = await self.async_client.get('/middleware_urlconf_view/')
+        self.assertEqual(response.resolver_match.url_name, 'middleware_urlconf_view')
+
+    async def test_follow_parameter_not_implemented(self):
+        msg = 'AsyncClient request methods do not accept the follow parameter.'
+        tests = (
+            'get',
+            'post',
+            'put',
+            'patch',
+            'delete',
+            'head',
+            'options',
+            'trace',
+        )
+        for method_name in tests:
+            with self.subTest(method=method_name):
+                method = getattr(self.async_client, method_name)
+                with self.assertRaisesMessage(NotImplementedError, msg):
+                    await method('/redirect_view/', follow=True)
+
+
+@override_settings(ROOT_URLCONF='test_client.urls')
+class AsyncRequestFactoryTest(SimpleTestCase):
+    request_factory = AsyncRequestFactory()
+
+    async def test_request_factory(self):
+        tests = (
+            'get',
+            'post',
+            'put',
+            'patch',
+            'delete',
+            'head',
+            'options',
+            'trace',
+        )
+        for method_name in tests:
+            with self.subTest(method=method_name):
+                async def async_generic_view(request):
+                    if request.method.lower() != method_name:
+                        return HttpResponseNotAllowed(method_name)
+                    return HttpResponse(status=200)
+
+                method = getattr(self.request_factory, method_name)
+                request = method('/somewhere/')
+                response = await async_generic_view(request)
+                self.assertEqual(response.status_code, 200)
+
+    async def test_request_factory_data(self):
+        async def async_generic_view(request):
+            return HttpResponse(status=200, content=request.body)
+
+        request = self.request_factory.post(
+            '/somewhere/',
+            data={'example': 'data'},
+            content_type='application/json',
+        )
+        self.assertEqual(request.headers['content-length'], '19')
+        self.assertEqual(request.headers['content-type'], 'application/json')
+        response = await async_generic_view(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b'{"example": "data"}')
+
+    def test_request_factory_sets_headers(self):
+        request = self.request_factory.get(
+            '/somewhere/',
+            AUTHORIZATION='Bearer faketoken',
+            X_ANOTHER_HEADER='some other value',
+        )
+        self.assertEqual(request.headers['authorization'], 'Bearer faketoken')
+        self.assertIn('HTTP_AUTHORIZATION', request.META)
+        self.assertEqual(request.headers['x-another-header'], 'some other value')
+        self.assertIn('HTTP_X_ANOTHER_HEADER', request.META)

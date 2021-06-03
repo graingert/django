@@ -7,7 +7,7 @@ from unittest.mock import Mock
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.models import ContentType
 from django.core import management
-from django.db import DEFAULT_DB_ALIAS, connections, router, transaction
+from django.db import DEFAULT_DB_ALIAS, router, transaction
 from django.db.models import signals
 from django.db.utils import ConnectionRouter
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -17,7 +17,7 @@ from .routers import AuthRouter, TestRouter, WriteRouter
 
 
 class QueryTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def test_db_selection(self):
         "Querysets will use the default database by default"
@@ -840,8 +840,8 @@ class QueryTestCase(TestCase):
 
         # Set a foreign key with an object from a different database
         msg = (
-            'Cannot assign "<ContentType: book>": the current database router '
-            'prevents this relation.'
+            'Cannot assign "<ContentType: multiple_database | book>": the '
+            'current database router prevents this relation.'
         )
         with self.assertRaisesMessage(ValueError, msg):
             review1.content_object = dive
@@ -998,7 +998,7 @@ class ConnectionRouterTestCase(SimpleTestCase):
 # Make the 'other' database appear to be a replica of the 'default'
 @override_settings(DATABASE_ROUTERS=[TestRouter()])
 class RouterTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def test_db_selection(self):
         "Querysets obey the router for db suggestions"
@@ -1526,7 +1526,7 @@ class RouterTestCase(TestCase):
 
 @override_settings(DATABASE_ROUTERS=[AuthRouter()])
 class AuthTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def test_auth_manager(self):
         "The methods on the auth manager obey database hints"
@@ -1589,7 +1589,7 @@ class AntiPetRouter:
 
 
 class FixtureTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
     fixtures = ['multidb-common', 'multidb']
 
     @override_settings(DATABASE_ROUTERS=[AntiPetRouter()])
@@ -1629,10 +1629,10 @@ class FixtureTestCase(TestCase):
 
 
 class PickleQuerySetTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def test_pickling(self):
-        for db in connections:
+        for db in self.databases:
             Book.objects.using(db).create(title='Dive into Python', published=datetime.date(2009, 5, 4))
             qs = Book.objects.all()
             self.assertEqual(qs.db, pickle.loads(pickle.dumps(qs)).db)
@@ -1655,7 +1655,7 @@ class WriteToOtherRouter:
 
 
 class SignalTests(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def override_router(self):
         return override_settings(DATABASE_ROUTERS=[WriteToOtherRouter()])
@@ -1755,7 +1755,7 @@ class AttributeErrorRouter:
 
 
 class RouterAttributeErrorTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def override_router(self):
         return override_settings(DATABASE_ROUTERS=[AttributeErrorRouter()])
@@ -1807,7 +1807,7 @@ class ModelMetaRouter:
 
 @override_settings(DATABASE_ROUTERS=[ModelMetaRouter()])
 class RouterModelArgumentTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     def test_m2m_collection(self):
         b = Book.objects.create(title="Pro Django",
@@ -1845,7 +1845,7 @@ class MigrateTestCase(TestCase):
         'django.contrib.auth',
         'django.contrib.contenttypes'
     ]
-    multi_db = True
+    databases = {'default', 'other'}
 
     def test_migrate_to_other_database(self):
         """Regression test for #16039: migrate with --database option."""
@@ -1879,7 +1879,7 @@ class RouterUsed(Exception):
 
 
 class RouteForWriteTestCase(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     class WriteCheckRouter:
         def db_for_write(self, model, **hints):
@@ -2091,9 +2091,9 @@ class NoRelationRouter:
 
 
 @override_settings(DATABASE_ROUTERS=[NoRelationRouter()])
-class RelationAssignmentTests(TestCase):
+class RelationAssignmentTests(SimpleTestCase):
     """allow_relation() is called with unsaved model instances."""
-    multi_db = True
+    databases = {'default', 'other'}
     router_prevents_msg = 'the current database router prevents this relation'
 
     def test_foreign_key_relation(self):

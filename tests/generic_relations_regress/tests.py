@@ -1,6 +1,5 @@
-from django.db.models import Q, Sum
-from django.db.models.deletion import ProtectedError
-from django.db.utils import IntegrityError
+from django.db import IntegrityError
+from django.db.models import ProtectedError, Q, Sum
 from django.forms.models import modelform_factory
 from django.test import TestCase, skipIfDBFeature
 
@@ -273,3 +272,12 @@ class GenericRelationTests(TestCase):
         link = Link.objects.create(content_object=place)
         result = Link.objects.filter(places=place)
         self.assertCountEqual(result, [link])
+
+    def test_generic_reverse_relation_with_abc(self):
+        """
+        The reverse generic relation accessor (targets) is created if the
+        GenericRelation comes from an abstract base model (HasLinks).
+        """
+        thing = HasLinkThing.objects.create()
+        link = Link.objects.create(content_object=thing)
+        self.assertCountEqual(link.targets.all(), [thing])
